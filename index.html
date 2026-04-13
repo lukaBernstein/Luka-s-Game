@@ -73,6 +73,8 @@
     </script>
 
     <script>
+
+        
       const canvas = document.getElementById('ascii-canvas');
         const ctx = canvas.getContext('2d');
         
@@ -267,8 +269,11 @@
     </script>
 
   <script type="module">  
+
         import * as THREE from 'three';
         import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        
 
         function createSeededRandom(seed) {
             return function() {
@@ -279,6 +284,11 @@
             }
         }
         const rnd = createSeededRandom(42069);
+
+        const obstacles = []; // This is the 'map' of solid objects
+        let verticalVelocity = 0;
+        let isGrounded = true;
+        const PLAYER_RADIUS = 50;
 
         function getElevation(x, z) {
             let elevation = 0;
@@ -457,7 +467,7 @@ const asciiPillarMat = new THREE.ShaderMaterial({
         const hengeRadius = 2000; 
         const hengeGroup = new THREE.Group();
         const pillarCount = 18; 
-        for(let i = 0; i < pillarCount; i++) {
+       for(let i = 0; i < pillarCount; i++) {
             const angle = (i / pillarCount) * Math.PI * 2 + (rnd() * 0.1);
             const px = Math.cos(angle) * hengeRadius;
             const pz = Math.sin(angle) * hengeRadius;
@@ -467,6 +477,7 @@ const asciiPillarMat = new THREE.ShaderMaterial({
             const p1 = new THREE.Mesh(new THREE.BoxGeometry(250+rnd()*70, h1, 200+rnd()*40), rockMat); p1.position.set(-280, (h1/2) - 150, 0); p1.castShadow = p1.receiveShadow = true;
             const p2 = new THREE.Mesh(new THREE.BoxGeometry(250+rnd()*70, h2, 200+rnd()*40), rockMat); p2.position.set(280, (h2/2) - 150, 0); p2.castShadow = p2.receiveShadow = true;
             trilithon.add(p1, p2);
+            
             if(hasLintel && !isBroken) {
                 const lintel = new THREE.Mesh(new THREE.BoxGeometry(950, 180, 400), rockMat); 
                 lintel.position.set(0, Math.max(h1, h2) - 130, (rnd()-0.5)*80);
@@ -474,8 +485,34 @@ const asciiPillarMat = new THREE.ShaderMaterial({
                 lintel.castShadow = lintel.receiveShadow = true; trilithon.add(lintel);
             }
             trilithon.position.set(px, getElevation(sX + px, sZ + pz) - getElevation(sX, sZ), pz);
-            trilithon.lookAt(0, trilithon.position.y, 0); hengeGroup.add(trilithon);
+            trilithon.lookAt(0, trilithon.position.y, 0); 
+            hengeGroup.add(trilithon);
+const s = Math.sin(angle); const c = Math.cos(angle);
+            
+            // The stones are inside a group moved to sX, sZ.
+            // We must add those offsets so the hitboxes match the visuals.
+            const worldBaseX = sX + px;
+            const worldBaseZ = sZ + pz;
+
+            // We use hengeGroup.position.y because it represents 
+            // the actual ground level at the center of the Henge.
+            const groundBase = hengeGroup.position.y; 
+
+            obstacles.push({ 
+                x: worldBaseX + (-280 * c), 
+                z: worldBaseZ + (-280 * s), 
+                radius: 250, 
+                top: groundBase + h1 
+            });
+            
+            obstacles.push({ 
+                x: worldBaseX + (280 * c), 
+                z: worldBaseZ + (280 * s), 
+                radius: 250, 
+                top: groundBase + h2 
+            });
         }
+
         hengeGroup.position.set(sX, getElevation(sX, sZ), sZ); scene.add(hengeGroup);
 
         const baseRockGeo = new THREE.IcosahedronGeometry(1, 1);
@@ -485,6 +522,7 @@ const asciiPillarMat = new THREE.ShaderMaterial({
             if (distToSpawn < hengeRadius + 800 || (clusterZ - sZ < 0 && Math.abs(clusterX - sX) < 1200)) continue;
             const rocksInCluster = Math.floor(rnd() * 8) + 4; 
             for(let j=0; j<rocksInCluster; j++) {
+                
                 const rock = new THREE.Mesh(baseRockGeo, rockMat);
                 const baseScale = 10 + Math.pow(rnd(), 2.5) * 350; 
                 rock.scale.set(baseScale * (0.8 + rnd() * 0.4), baseScale * (0.5 + rnd() * 0.5), baseScale * (0.8 + rnd() * 0.4));
@@ -493,6 +531,20 @@ const asciiPillarMat = new THREE.ShaderMaterial({
                 rock.position.set(worldX, getElevation(worldX, worldZ) + (rock.scale.y * 0.2), worldZ);
                 rock.rotation.set(rnd()*Math.PI, rnd()*Math.PI, rnd()*Math.PI);
                 rock.castShadow = rock.receiveShadow = true; scene.add(rock);
+                // Calculate three points around the center of the rock
+for (let angle = 0; angle < Math.PI * 2; angle += (Math.PI * 2) / 3) {
+    const offsetX = Math.cos(angle) * (baseScale * 0.3);
+    const offsetZ = Math.sin(angle) * (baseScale * 0.3);
+    
+    obstacles.push({
+        x: worldX + offsetX,
+        z: worldZ + offsetZ,
+        radius: baseScale * 0.3, // Small overlapping circles
+        top: rock.position.y + (rock.scale.y * 0.5)
+    });
+}
+                
+                
             }
         }
 
@@ -535,6 +587,13 @@ const asciiPillarMat = new THREE.ShaderMaterial({
             const s = isTree ? (2.5 + rnd()*4.5) : (1.5 + rnd()*2.5); m.scale.set(s,s,s);
             m.position.set(vx, getElevation(vx, vz), vz); m.rotation.y = rnd()*Math.PI*2; 
             m.traverse(node => { if(node.isMesh) node.castShadow = true; }); scene.add(m);
+            obstacles.push({ 
+                x: vx, 
+                z: vz, 
+                radius: isTree ? (20 * s) : (10 * s), 
+                top: m.position.y + (isTree ? 160 * s : 80 * s) 
+            });
+
         }
 
       
@@ -566,6 +625,13 @@ const asciiPillarMat = new THREE.ShaderMaterial({
                 
                 p.castShadow = true; // These will now cast shadows!
                 scene.add(p);
+obstacles.push({ 
+                    x: px, 
+                    z: pz, 
+                    radius: sW * 0.5, 
+                    top: p.position.y + (sH / 2) 
+                });
+
                 p.userData.rotSpeed = (rnd() - 0.5) * 0.2; // Store a unique speed for each
                 pillarsSpawned++;
             }
@@ -662,10 +728,12 @@ const asciiPillarMat = new THREE.ShaderMaterial({
             if (keys.a || keys.arrowleft) controls.moveRight(-speed);
             if (keys.d || keys.arrowright) controls.moveRight(speed);
         }
-let verticalVelocity = 0;
-        let isGrounded = true;
+
+// let isGrounded = true;
 
         const clock = new THREE.Clock();
+
+        
         function animate() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
@@ -675,37 +743,55 @@ let verticalVelocity = 0;
             moteMat.uniforms.uTime.value = time;
             if (asciiPillarMat) asciiPillarMat.uniforms.uTime.value = time;
 
-            if (controls.isLocked) {
+          if (controls.isLocked) {
                 const speed = 1800 * delta;
+                const oldX = camera.position.x;
+                const oldZ = camera.position.z;
 
-                // 1. Horizontal Movement
                 if (keys.w) controls.moveForward(speed); 
                 if (keys.s) controls.moveForward(-speed);
                 if (keys.a) controls.moveRight(-speed); 
                 if (keys.d) controls.moveRight(speed);
 
-                // 2. Jump & Heavy Gravity Logic
-                const groundY = getElevation(camera.position.x, camera.position.z) + USER_HEIGHT;
-                
-                // JUMP HIGHER: Increased from 450 to 700
-                if (keys[" "] && isGrounded) {
-                    verticalVelocity = 1300; 
-                    isGrounded = false;
+                // Check all obstacles to see if we hit a wall or landed on a roof
+              let currentFloorY = getElevation(camera.position.x, camera.position.z) + USER_HEIGHT;
+                let hitWall = false;
+
+                for (let obs of obstacles) {
+                    const dx = camera.position.x - obs.x;
+                    const dz = camera.position.z - obs.z;
+                    const dist = Math.sqrt(dx * dx + dz * dz);
+
+                    // If we are within the radius of the pillar
+                    if (dist < obs.radius + PLAYER_RADIUS) {
+                        // Check if we are high enough to be "on top"
+                        // We compare camera.position.y (your eyes) to the rock top
+                        if (camera.position.y > obs.top + 50) {
+                            currentFloorY = Math.max(currentFloorY, obs.top + USER_HEIGHT);
+                        } else {
+                            // If we aren't clearly above it, we hit the side
+                            hitWall = true;
+                        }
+                    }
                 }
 
-                // FALL FASTER: Increased gravity from 1200 to 2400
-                // This makes the jump feel less "floaty"
+                if (hitWall) {
+                    camera.position.x = oldX;
+                    camera.position.z = oldZ;
+                }
+
+                // Jump & Gravity
+                if (keys[" "] && isGrounded) { verticalVelocity = 800; isGrounded = false; }
                 verticalVelocity -= 2600 * delta; 
                 camera.position.y += verticalVelocity * delta;
 
-                // Floor constraint
-                if (camera.position.y <= groundY) {
-                    camera.position.y = groundY;
+                if (camera.position.y <= currentFloorY) {
+                    camera.position.y = currentFloorY;
                     verticalVelocity = 0;
                     isGrounded = true;
                 }
                 
-                // 3. Sky Objects (Sun/Moon)
+                // Update Sun/Moon
                 const sDist = 35000;
                 sunMesh.position.set(camera.position.x + (SUN_DIR.x * sDist), camera.position.y + (SUN_DIR.y * sDist), camera.position.z + (SUN_DIR.z * sDist));
                 sunMesh.lookAt(camera.position);
