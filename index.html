@@ -288,7 +288,7 @@
         const obstacles = []; // This is the 'map' of solid objects
         let verticalVelocity = 0;
         let isGrounded = true;
-        const PLAYER_RADIUS = 50;
+        const PLAYER_RADIUS = 1;
 
         function getElevation(x, z) {
             let elevation = 0;
@@ -498,22 +498,21 @@ const s = Math.sin(angle); const c = Math.cos(angle);
             // the actual ground level at the center of the Henge.
             const groundBase = hengeGroup.position.y; 
 
-            obstacles.push({ 
-                x: worldBaseX + (-280 * c), 
-                z: worldBaseZ + (-280 * s), 
-                radius: 250, 
-                top: groundBase + h1 
-            });
-            
-            obstacles.push({ 
-                x: worldBaseX + (280 * c), 
-                z: worldBaseZ + (280 * s), 
-                radius: 250, 
-                top: groundBase + h2 
-            });
         }
 
-        hengeGroup.position.set(sX, getElevation(sX, sZ), sZ); scene.add(hengeGroup);
+        hengeGroup.position.set(sX, getElevation(sX, sZ), sZ); 
+        scene.add(hengeGroup);
+        
+        // Force the engine to calculate the final world positions
+        hengeGroup.updateMatrixWorld(true);
+        
+        // Loop through every individual stone in the henge
+        hengeGroup.traverse(node => {
+            if (node.isMesh) {
+                // Register each pillar and lintel as a separate solid object
+                obstacles.push(new THREE.Box3().setFromObject(node));
+            }
+        });
 
         const baseRockGeo = new THREE.IcosahedronGeometry(1, 1);
         for(let i=0; i<2000; i++) {
@@ -532,17 +531,20 @@ const s = Math.sin(angle); const c = Math.cos(angle);
                 rock.rotation.set(rnd()*Math.PI, rnd()*Math.PI, rnd()*Math.PI);
                 rock.castShadow = rock.receiveShadow = true; scene.add(rock);
                 // Calculate three points around the center of the rock
-for (let angle = 0; angle < Math.PI * 2; angle += (Math.PI * 2) / 3) {
-    const offsetX = Math.cos(angle) * (baseScale * 0.3);
-    const offsetZ = Math.sin(angle) * (baseScale * 0.3);
-    
-    obstacles.push({
-        x: worldX + offsetX,
-        z: worldZ + offsetZ,
-        radius: baseScale * 0.3, // Small overlapping circles
-        top: rock.position.y + (rock.scale.y * 0.5)
-    });
-}
+rock.castShadow = rock.receiveShadow = true; 
+                scene.add(rock);
+                
+                // --- EXACT BOULDER COLLISION ---
+                const tightX = rock.scale.x * 0.7;
+                const tightZ = rock.scale.z * 0.7;
+                const tightY = rock.scale.y;
+
+                const tightBox = new THREE.Box3(
+                    new THREE.Vector3(rock.position.x - tightX/2, rock.position.y - tightY/2, rock.position.z - tightZ/2),
+                    new THREE.Vector3(rock.position.x + tightX/2, rock.position.y + tightY/2, rock.position.z + tightZ/2)
+                );
+                
+                obstacles.push(tightBox);
                 
                 
             }
@@ -558,6 +560,67 @@ for (let angle = 0; angle < Math.PI * 2; angle += (Math.PI * 2) / 3) {
         const barkMat = new THREE.MeshStandardMaterial({ map: createBarkTexture() });
         const cactusMat = new THREE.MeshStandardMaterial({ color: 0x1a823e });
         const leafMat = new THREE.MeshStandardMaterial({ color: 0x2d331d, roughness: 1.0, flatShading: true });
+
+        // Flower Assets
+        const flowerGeo = new THREE.PlaneGeometry(40, 40);
+        const flowerColors = [0xffb7ff, 0xffffb7, 0xffffff, 0x87ceeb]; // Pink, Yellow, White, Blue
+
+       function createFlower() {
+            const group = new THREE.Group();
+            group.name = "flower"; // Added for the swaying animation
+            const color = flowerColors[Math.floor(rnd() * flowerColors.length)];
+
+            // Create a 5-Petal Shape procedurally
+            const size = 128; // Increased resolution for smoother edges
+            const data = new Uint8Array(size * size);
+            for (let i = 0; i < size * size; i++) {
+                const x = (i % size) / size - 0.5;
+                const y = Math.floor(i / size) / size - 0.5;
+                
+                const dist = Math.sqrt(x * x + y * y);
+                const angle = Math.atan2(y, x);
+                
+                // MATH: This creates 5 petals by oscillating the radius based on angle
+                const petalShape = 0.2 + 0.2 * Math.cos(angle * 5);
+                
+                // If the pixel is inside the petal shape, make it visible (255)
+                data[i] = dist < petalShape ? 255 : 0; 
+            }
+            
+            const mask = new THREE.DataTexture(data, size, size, THREE.LuminanceFormat);
+            mask.needsUpdate = true;
+
+            const mat = new THREE.MeshLambertMaterial({ 
+                color: color, 
+                side: THREE.DoubleSide,
+                alphaMap: mask,
+                transparent: true,
+                alphaTest: 0.5 
+            });
+
+            // The Petal Planes - Square geometry works best for the petal math
+            const p1 = new THREE.Mesh(new THREE.PlaneGeometry(45, 45), mat);
+            const p2 = new THREE.Mesh(new THREE.PlaneGeometry(45, 45), mat);
+            p2.rotation.y = Math.PI / 2;
+            
+            // The Stem (A thin green line/cylinder)
+            const stemGeo = new THREE.CylinderGeometry(1.5, 1.5, 40);
+            const stemMat = new THREE.MeshLambertMaterial({ color: 0x2d5a27 });
+            const stem = new THREE.Mesh(stemGeo, stemMat);
+            stem.position.y = -20; // Move it down so the flower is on top
+
+            // The Yellow Center (make it smaller so it doesn't hide the petals)
+            const centerGeo = new THREE.SphereGeometry(5, 6, 6);
+            const centerMat = new THREE.MeshLambertMaterial({ color: 0xffff00 });
+            const center = new THREE.Mesh(centerGeo, centerMat);
+
+            group.add(p1, p2, stem, center);
+            
+            // Move the whole group up so the bottom of the stem hits the ground
+            group.position.y = 20; 
+            
+            return group;
+        }
         
         function buildCactus() {
             const g = new THREE.Group(); const t = new THREE.Mesh(new THREE.CylinderGeometry(8, 8, 80, 8), cactusMat); t.position.y = 40; t.castShadow = true; g.add(t);
@@ -587,52 +650,84 @@ for (let angle = 0; angle < Math.PI * 2; angle += (Math.PI * 2) / 3) {
             const s = isTree ? (2.5 + rnd()*4.5) : (1.5 + rnd()*2.5); m.scale.set(s,s,s);
             m.position.set(vx, getElevation(vx, vz), vz); m.rotation.y = rnd()*Math.PI*2; 
             m.traverse(node => { if(node.isMesh) node.castShadow = true; }); scene.add(m);
-            obstacles.push({ 
-                x: vx, 
-                z: vz, 
-                radius: isTree ? (20 * s) : (10 * s), 
-                top: m.position.y + (isTree ? 160 * s : 80 * s) 
-            });
+            m.updateMatrixWorld(true);
+            obstacles.push(new THREE.Box3().setFromObject(m));
 
+        }
+
+        for(let i = 0; i < 1500; i++) {
+            const fx = (rnd() - 0.5) * 110000;
+            const fz = (rnd() - 0.5) * 110000;
+            
+            // Avoid spawning in the center spawn area
+            if (Math.sqrt(fx*fx + fz*fz) < 2500) continue;
+
+            const flower = createFlower();
+            const scale = 0.5 + rnd() * 1.5;
+            flower.scale.set(scale, scale, scale);
+            
+            // Position on the grass
+            flower.position.set(fx, getElevation(fx, fz) + (20 * scale), fz);
+            
+            // Randomly tilt them slightly so they look natural
+            flower.rotation.x = (rnd() - 0.5) * 0.2;
+            flower.rotation.z = (rnd() - 0.5) * 0.2;
+
+            scene.add(flower);
         }
 
       
 // --- 5 DISTANT CRAGGY MONOLITHS ---
        // --- 5 DISTANT CRAGGY MONOLITHS ---
         const pillarGeo = new THREE.IcosahedronGeometry(1, 0); 
-        let pillarsSpawned = 0;
 
-        while(pillarsSpawned < 5) {
+        let pillarsSpawned = 0;
+       while(pillarsSpawned < 5) {
             const px = sX + (rnd() - 0.5) * 45000;
             const pz = sZ + (rnd() - 0.5) * 45000;
             const dist = Math.sqrt((px - sX)**2 + (pz - sZ)**2);
 
-            // Keep them in the "sweet spot" of the horizon
             if (dist > 15000 && dist < 30000) { 
+                // Giant Pillar using ASCII Texture
                 const p = new THREE.Mesh(pillarGeo, asciiPillarMat);
                 const groundH = getElevation(px, pz);
-                
-                // Scale them to be massive (800 wide, 4000 tall)
                 const sW = 600 + rnd() * 400;
                 const sH = 3000 + rnd() * 2000;
+                
                 p.scale.set(sW, sH, sW);
-                
-                // Position: Hovering slightly
                 p.position.set(px, groundH + (sH / 2) + 200, pz); 
-                
                 p.rotation.y = rnd() * Math.PI;
-                p.rotation.z = (rnd() - 0.5) * 0.2; 
-                
-                p.castShadow = true; // These will now cast shadows!
+                p.castShadow = true;
+                p.userData.rotSpeed = (rnd() - 0.5) * 0.2;
                 scene.add(p);
-obstacles.push({ 
-                    x: px, 
-                    z: pz, 
-                    radius: sW * 0.5, 
-                    top: p.position.y + (sH / 2) 
-                });
 
-                p.userData.rotSpeed = (rnd() - 0.5) * 0.2; // Store a unique speed for each
+                // Main Pillar Collision
+                p.updateMatrixWorld(true);
+                obstacles.push(new THREE.Box3().setFromObject(p));
+
+                // --- ADD PARKOUR STEPS ---
+                const stepCount = 10 + Math.floor(rnd() * 5);
+                for(let k = 0; k < stepCount; k++) {
+                    const angle = k * 0.9; 
+                    const hOffset = k * 350 + 400; // Jumpable height
+                    const radius = (sW * 0.5) + 300 + (rnd() * 200);
+                    
+                    const stepX = px + Math.cos(angle) * radius;
+                    const stepZ = pz + Math.sin(angle) * radius;
+                    const stepY = groundH + hOffset;
+
+                    const stepSize = 250 + rnd() * 150;
+                    // Steps use the Rock material so they look solid
+                    const step = new THREE.Mesh(new THREE.BoxGeometry(stepSize, 80, stepSize), rockMat);
+                    step.position.set(stepX, stepY, stepZ);
+                    step.rotation.y = rnd() * Math.PI;
+                    step.castShadow = true;
+                    scene.add(step);
+
+                   step.updateMatrixWorld(true);
+                    obstacles.push(new THREE.Box3().setFromObject(step));
+                }
+
                 pillarsSpawned++;
             }
         }
@@ -754,25 +849,38 @@ obstacles.push({
                 if (keys.d) controls.moveRight(speed);
 
                 // Check all obstacles to see if we hit a wall or landed on a roof
-              let currentFloorY = getElevation(camera.position.x, camera.position.z) + USER_HEIGHT;
+             
+              // Calculate Ground Floor
+                let currentFloorY = getElevation(camera.position.x, camera.position.z) + USER_HEIGHT;
                 let hitWall = false;
 
-                for (let obs of obstacles) {
-                    const dx = camera.position.x - obs.x;
-                    const dz = camera.position.z - obs.z;
-                    const dist = Math.sqrt(dx * dx + dz * dz);
+                const px = camera.position.x;
+                const pz = camera.position.z;
+                const playerFeetY = camera.position.y - USER_HEIGHT;
 
-                    // If we are within the radius of the pillar
-                    if (dist < obs.radius + PLAYER_RADIUS) {
-                        // Check if we are high enough to be "on top"
-                        // We compare camera.position.y (your eyes) to the rock top
-                        if (camera.position.y > obs.top + 50) {
-                            currentFloorY = Math.max(currentFloorY, obs.top + USER_HEIGHT);
-                        } else {
-                            // If we aren't clearly above it, we hit the side
+                // Check all exact object boundaries
+                for (let box of obstacles) {
+                    
+                    // 1. Expand the Box3 horizontally by PLAYER_RADIUS so we don't clip inside
+                    if (px > box.min.x - PLAYER_RADIUS && px < box.max.x + PLAYER_RADIUS &&
+                        pz > box.min.z - PLAYER_RADIUS && pz < box.max.z + PLAYER_RADIUS) {
+                        
+                        // 2. Check if we are landing on the TOP
+                        // We allow a small 40-unit buffer so you can smoothly step onto flat surfaces
+                        if (playerFeetY >= box.max.y - 60) {
+                            currentFloorY = Math.max(currentFloorY, box.max.y + USER_HEIGHT);
+                        } 
+                        // 3. Check if we hit the SIDE
+                        // If our camera (head) is above the bottom of the box, we hit a solid wall
+                        else if (camera.position.y > box.min.y) {
                             hitWall = true;
                         }
                     }
+                }
+
+                if (hitWall) {
+                    camera.position.x = oldX;
+                    camera.position.z = oldZ;
                 }
 
                 if (hitWall) {
