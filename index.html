@@ -633,7 +633,8 @@ const asciiPillarMat = new THREE.ShaderMaterial({
 
      let keys = {
             w: 0, a: 0, s: 0, d: 0,
-            arrowup: 0, arrowdown: 0, arrowleft: 0, arrowright: 0
+            arrowup: 0, arrowdown: 0, arrowleft: 0, arrowright: 0,
+            " ": 0 // Add this line for the spacebar
         };
 
         document.addEventListener('keydown', e => { 
@@ -661,6 +662,8 @@ const asciiPillarMat = new THREE.ShaderMaterial({
             if (keys.a || keys.arrowleft) controls.moveRight(-speed);
             if (keys.d || keys.arrowright) controls.moveRight(speed);
         }
+let verticalVelocity = 0;
+        let isGrounded = true;
 
         const clock = new THREE.Clock();
         function animate() {
@@ -674,13 +677,35 @@ const asciiPillarMat = new THREE.ShaderMaterial({
 
             if (controls.isLocked) {
                 const speed = 1800 * delta;
+
+                // 1. Horizontal Movement
                 if (keys.w) controls.moveForward(speed); 
                 if (keys.s) controls.moveForward(-speed);
                 if (keys.a) controls.moveRight(-speed); 
                 if (keys.d) controls.moveRight(speed);
 
-                camera.position.y = getElevation(camera.position.x, camera.position.z) + USER_HEIGHT;
+                // 2. Jump & Heavy Gravity Logic
+                const groundY = getElevation(camera.position.x, camera.position.z) + USER_HEIGHT;
                 
+                // JUMP HIGHER: Increased from 450 to 700
+                if (keys[" "] && isGrounded) {
+                    verticalVelocity = 1300; 
+                    isGrounded = false;
+                }
+
+                // FALL FASTER: Increased gravity from 1200 to 2400
+                // This makes the jump feel less "floaty"
+                verticalVelocity -= 2600 * delta; 
+                camera.position.y += verticalVelocity * delta;
+
+                // Floor constraint
+                if (camera.position.y <= groundY) {
+                    camera.position.y = groundY;
+                    verticalVelocity = 0;
+                    isGrounded = true;
+                }
+                
+                // 3. Sky Objects (Sun/Moon)
                 const sDist = 35000;
                 sunMesh.position.set(camera.position.x + (SUN_DIR.x * sDist), camera.position.y + (SUN_DIR.y * sDist), camera.position.z + (SUN_DIR.z * sDist));
                 sunMesh.lookAt(camera.position);
@@ -708,6 +733,7 @@ const asciiPillarMat = new THREE.ShaderMaterial({
     }
 });
         }
+
       
         animate();
         window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth / PIXEL_SCALE, window.innerHeight / PIXEL_SCALE, false); });
