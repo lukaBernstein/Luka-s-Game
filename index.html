@@ -79,6 +79,20 @@
 
     <script>
 
+        const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+        // If on mobile, hide the prompts so it's just pure ASCII art
+if (isMobileDevice) {
+    window.addEventListener('DOMContentLoaded', () => {
+        const prompt = document.getElementById('click-prompt');
+        if (prompt) prompt.style.display = 'none';
+        
+        // We also hide the WASD instructions since they can't play
+        const ui = document.getElementById('ui');
+        if (ui) ui.style.display = 'none';
+    });
+}
+
         
       const canvas = document.getElementById('ascii-canvas');
         const ctx = canvas.getContext('2d');
