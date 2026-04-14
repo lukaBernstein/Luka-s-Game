@@ -139,6 +139,21 @@ if (isMobileDevice) {
             mCtx.font = `900 ${maskFontSize}px "Times New Roman", serif`;
             mCtx.textAlign = "center"; mCtx.textBaseline = "middle"; 
             mCtx.fillText("PLAY", cols / 2, (rows / 2) + (rows * 0.05));
+if (isMobileDevice) {
+            // MOBILE: Fill the entire canvas with white 
+            // This makes the whole screen a grid of characters
+            mCtx.fillStyle = "white";
+            mCtx.fillRect(0, 0, cols, rows);
+        } else {
+            // DESKTOP: Only draw the word "PLAY" in white
+            mCtx.fillStyle = "white";
+            let maskFontSize = Math.floor(cols / 2.8); 
+            mCtx.font = `900 ${maskFontSize}px "Times New Roman", serif`;
+            mCtx.textAlign = "center"; 
+            mCtx.textBaseline = "middle"; 
+            mCtx.fillText("PLAY", cols / 2, (rows / 2) + (rows * 0.05));
+        }
+
             mask = mCtx.getImageData(0, 0, cols, rows).data;
         }
 
