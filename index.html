@@ -659,8 +659,11 @@ const s = Math.sin(angle); const c = Math.cos(angle);
                 // 0.88 shrinks radii slightly so the hitbox hugs the visual surface.
                 rock.updateMatrixWorld(true);
                 const invMat = new THREE.Matrix4().copy(rock.matrixWorld).invert();
+                const rockAABB = new THREE.Box3().setFromObject(rock);
                 obstacles.push({ type: 'ellipsoid',
                     invMatrix: invMat,
+                    fwdMatrix: rock.matrixWorld.clone(),
+                    aabb: rockAABB,
                     rx: rock.scale.x * 0.88,
                     ry: rock.scale.y * 0.88,
                     rz: rock.scale.z * 0.88,
@@ -938,7 +941,9 @@ const s = Math.sin(angle); const c = Math.cos(angle);
         scene.updateMatrixWorld(true);
 
         const PR = 22; // player horizontal capsule radius
-        const _pLocal = new THREE.Vector3(); // reusable for ellipsoid test
+        const _pLocal = new THREE.Vector3();    // reusable for ellipsoid side-collision test
+        const _eSurfLocal = new THREE.Vector3(); // reusable for ellipsoid floor surface point (local)
+        const _eRockMat = new THREE.Matrix4();   // reusable rock world matrix (uninverted)
 
         function collidesAt(tx, tz) {
             const fy = camera.position.y - USER_HEIGHT;
@@ -949,6 +954,8 @@ const s = Math.sin(angle); const c = Math.cos(angle);
                     const dx = tx - obs.cx, dz = tz - obs.cz;
                     if (dx*dx + dz*dz < (obs.r + PR) * (obs.r + PR)) return true;
                 } else if (obs.type === 'ellipsoid') {
+                    // Skip if player is clearly above or below the rock's AABB
+                    if (fy >= obs.aabb.max.y || hy <= obs.aabb.min.y) continue;
                     // Broad-phase: skip if player center is obviously far from rock center
                     const bdx = tx - obs.center.x, bdz = tz - obs.center.z;
                     const maxR = Math.max(obs.rx, obs.ry, obs.rz) + PR;
@@ -1008,11 +1015,15 @@ const s = Math.sin(angle); const c = Math.cos(angle);
                                 currentFloorY = Math.max(currentFloorY, obs.maxY + USER_HEIGHT);
                         }
                     } else if (obs.type === 'ellipsoid') {
-                        // Can stand on top of a rock — use a simple broad check on XZ + top of ellipsoid
-                        const dx = camera.position.x - obs.center.x, dz = camera.position.z - obs.center.z;
-                        if (dx*dx + dz*dz < (obs.rx + PR) * (obs.rx + PR)) {
-                            const topY = obs.center.y + obs.ry;
-                            if (feetY >= topY - 5 && feetY <= topY + 200)
+                        // Use the precomputed AABB for floor detection — it correctly accounts
+                        // for rotation and scale, unlike the local-space math which was double-scaling.
+                        const b = obs.aabb;
+                        const topY = b.max.y;
+                        // Check player is horizontally over the rock (with a little padding)
+                        if (camera.position.x > b.min.x - PR && camera.position.x < b.max.x + PR &&
+                            camera.position.z > b.min.z - PR && camera.position.z < b.max.z + PR) {
+                            // Accept a wide vertical window so fast-falling frames don't tunnel through
+                            if (feetY <= topY + 500 && feetY >= topY - 120)
                                 currentFloorY = Math.max(currentFloorY, topY + USER_HEIGHT);
                         }
                     } else {
