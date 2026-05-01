@@ -71,6 +71,87 @@
             text-align: center;
             z-index: 100;
         }
+
+        /* Character menu — Tab to open. Hidden by default; we toggle the
+           .open class to fade it in. Pointer-events stay 'none' while
+           closed so it never intercepts clicks on the game canvas. */
+        #character-menu {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 200;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Courier New', Courier, monospace;
+            color: #fff;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.18s ease-out;
+        }
+        #character-menu.open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        #character-menu .cm-panel {
+            width: min(560px, 92vw);
+            max-height: 86vh;
+            overflow-y: auto;
+            border: 1px solid #fff;
+            padding: 28px 36px;
+            letter-spacing: 2px;
+            background: #000;
+        }
+        #character-menu .cm-header {
+            text-align: center;
+            font-size: 18px;
+            margin-bottom: 24px;
+            letter-spacing: 6px;
+        }
+        #character-menu .cm-section {
+            margin-bottom: 22px;
+        }
+        #character-menu .cm-portrait-wrap {
+            display: flex;
+            justify-content: center;
+            margin: 4px 0 22px;
+        }
+        #character-menu #cm-portrait {
+            width: 220px;
+            height: 260px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            background: #050505;
+            display: block;
+        }
+        #character-menu .cm-section-title {
+            font-size: 13px;
+            opacity: 0.7;
+            margin-bottom: 10px;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.3);
+            padding-bottom: 6px;
+        }
+        #character-menu .cm-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            padding: 4px 0;
+        }
+        #character-menu .cm-row span:last-child {
+            opacity: 0.85;
+        }
+        #character-menu .cm-empty {
+            font-size: 13px;
+            opacity: 0.5;
+            text-align: center;
+            padding: 8px 0;
+        }
+        #character-menu .cm-footer {
+            text-align: center;
+            font-size: 11px;
+            opacity: 0.55;
+            margin-top: 18px;
+            letter-spacing: 3px;
+        }
     </style>
 </head>
 <body>
@@ -85,7 +166,43 @@
         <canvas id="ascii-canvas"></canvas>
     </div>
 
-    <div id="ui">WASD TO MOVE | SPACE TO JUMP</div>
+    <div id="ui">WASD TO MOVE | SPACE TO JUMP | TAB FOR CHARACTER</div>
+
+    <!-- Character menu (Tab toggles, Esc closes). Static placeholder
+         content — wire real values into the .cm-row right-side spans
+         once you have stat/inventory state. -->
+    <div id="character-menu">
+        <div class="cm-panel">
+            <div class="cm-header">━ CHARACTER ━</div>
+
+            <div class="cm-portrait-wrap">
+                <canvas id="cm-portrait" width="220" height="260"></canvas>
+            </div>
+
+            <div class="cm-section">
+                <div class="cm-section-title">[ KNIGHT ]</div>
+                <div class="cm-row"><span>HP</span><span>100 / 100</span></div>
+                <div class="cm-row"><span>STAMINA</span><span>100 / 100</span></div>
+                <div class="cm-row"><span>LEVEL</span><span>1</span></div>
+                <div class="cm-row"><span>XP</span><span>0 / 100</span></div>
+            </div>
+
+            <div class="cm-section">
+                <div class="cm-section-title">[ EQUIPMENT ]</div>
+                <div class="cm-row"><span>HEAD</span><span>—</span></div>
+                <div class="cm-row"><span>BODY</span><span>—</span></div>
+                <div class="cm-row"><span>WEAPON</span><span>—</span></div>
+                <div class="cm-row"><span>OFFHAND</span><span>—</span></div>
+            </div>
+
+            <div class="cm-section">
+                <div class="cm-section-title">[ INVENTORY ]</div>
+                <div class="cm-empty">— EMPTY —</div>
+            </div>
+
+            <div class="cm-footer">[TAB] / [ESC] CLOSE</div>
+        </div>
+    </div>
 
     <script type="importmap">
         {
@@ -4501,10 +4618,334 @@ const s = Math.sin(angle); const c = Math.cos(angle);
             controls.lock();
         };
 
-        // Keep this so the user can re-lock if they escape out later
+        // Keep this so the user can re-lock if they escape out later.
+        // Skip while the character menu is open — clicking on the menu
+        // shouldn't yank the cursor back into pointer-lock.
         document.addEventListener('click', () => { 
-            if(window.worldActive && !controls.isLocked) controls.lock(); 
+            if(window.worldActive && !controls.isLocked && !window.menuOpen) controls.lock(); 
         });
+
+        // --- FIRST-PERSON KNIGHT BODY ---
+        // The knight is parented to a wrapper Group that follows the
+        // camera each frame: position = camera.position with USER_HEIGHT
+        // subtracted (so feet are on the floor, not the eyes), and
+        // rotation.y matches the camera's yaw so the body turns when
+        // the player turns. Pitch is intentionally NOT applied — the
+        // body shouldn't tilt when looking up/down.
+        //
+        // The Head bone is collapsed to ~0 scale after load. The camera
+        // sits at head height, so without this you'd be rendering the
+        // backfaces of your own helmet right against the lens. Scaling
+        // the bone collapses the verts it influences to a point —
+        // cleaner than messing with mesh.visible or the source geometry.
+        const knightWrapper = new THREE.Group();
+        scene.add(knightWrapper);
+        let knightLoaded = false;
+        let knightMixer  = null;  // AnimationMixer for the FP body
+        let knightIdleAction = null;
+        let knightRunAction  = null;
+        let knightAnimState  = 'idle'; // 'idle' | 'run', tracked so we
+                                       // only crossfade on transitions
+
+        {
+            const knightLoader = new GLTFLoader();
+            knightLoader.load('assets/Knight_Animated.glb', gltf => {
+                const knight = gltf.scene;
+                knight.updateMatrixWorld(true);
+
+                // Use BONE positions, not mesh bind-pose bbox, for sizing
+                // and feet alignment. The GLB has bind matrices that
+                // don't quite line up with the rest pose, so
+                // Box3.setFromObject (which iterates bind-pose verts)
+                // reports a bbox in the wrong place. The bones at rest
+                // are where the model actually renders. Skip IK helper
+                // bones since they sit off to the side.
+                const _bboxV = new THREE.Vector3();
+                const computeBoneBbox = () => {
+                    const box = new THREE.Box3();
+                    knight.traverse(o => {
+                        if (o.isBone && !o.name.startsWith('IK')) {
+                            o.getWorldPosition(_bboxV);
+                            box.expandByPoint(_bboxV);
+                        }
+                    });
+                    return box;
+                };
+
+                let bbox = computeBoneBbox();
+                const size = new THREE.Vector3();
+                bbox.getSize(size);
+
+                // Scale to player height. PLAYER_BODY_HEIGHT is in the
+                // game's world units (cm-ish given USER_HEIGHT).
+                const PLAYER_BODY_HEIGHT = 175;
+                knight.scale.setScalar(PLAYER_BODY_HEIGHT / size.y);
+
+                // Re-compute bbox after scaling and shift so feet land
+                // at wrapper-local y=0 (the wrapper itself follows the
+                // floor each frame, so feet-at-0 means feet-on-ground).
+                knight.updateMatrixWorld(true);
+                bbox = computeBoneBbox();
+                knight.position.y -= bbox.min.y;
+
+                // Hide the head from the player's own camera by
+                // collapsing the head bones. Head + Head_end covers
+                // the neck-up region.
+                knight.traverse(o => {
+                    if (o.isBone && (o.name === 'Head' || o.name === 'Head_end')) {
+                        o.scale.setScalar(0.001);
+                    }
+                });
+
+                // Shadow casting + don't frustum-cull skinned meshes
+                // (their bounding box is computed from bind pose and
+                // can be wrong once bones move, causing pop-out).
+                // The body itself is hidden — we keep the skeleton +
+                // animation running so things like footstep hooks or
+                // future visible-body modes can still rely on the
+                // mixer/state, but you don't see anything occluding
+                // your view. Set BODY_VISIBLE = true to reveal it.
+                const BODY_VISIBLE = false;
+                knight.traverse(o => {
+                    if (o.isMesh || o.isSkinnedMesh) {
+                        o.castShadow = BODY_VISIBLE;
+                        o.frustumCulled = false;
+                        o.visible = BODY_VISIBLE;
+                    }
+                });
+
+                // Model's native forward direction. With the
+                // retargeted GLB, the body's local forward axis ended
+                // up perpendicular to the camera's forward, so we need
+                // a 90° (Math.PI/2) yaw offset, not the 180° (Math.PI)
+                // that the original Knight.glb wanted.
+                //
+                // If you see the body rotated the WRONG way 90° (front
+                // facing your left instead of forward, or facing back),
+                // try one of these four values until it's right:
+                //   knight.rotation.y = 0;
+                //   knight.rotation.y = Math.PI / 2;
+                //   knight.rotation.y = Math.PI;
+                //   knight.rotation.y = -Math.PI / 2;     // current
+                knight.rotation.y = -Math.PI / 2;
+
+                knightWrapper.add(knight);
+
+                // Hook up both clips. Idle plays at full weight, Run
+                // plays at zero weight; crossFadeTo will swap them.
+                // Both must be .play()'d for crossfading to work — the
+                // mixer needs them "active" so weight can be animated.
+                if (gltf.animations && gltf.animations.length) {
+                    knightMixer = new THREE.AnimationMixer(knight);
+                    const idleClip = THREE.AnimationClip.findByName(gltf.animations, 'Idle');
+                    const runClip  = THREE.AnimationClip.findByName(gltf.animations, 'Run');
+                    if (idleClip) {
+                        knightIdleAction = knightMixer.clipAction(idleClip);
+                        knightIdleAction.play();
+                    }
+                    if (runClip) {
+                        knightRunAction = knightMixer.clipAction(runClip);
+                        knightRunAction.play();
+                        knightRunAction.weight = 0;
+                    }
+                    // Fallback: if neither named clip exists, just play
+                    // whatever's at index 0 (defensive — shouldn't happen).
+                    if (!idleClip && !runClip && gltf.animations[0]) {
+                        knightMixer.clipAction(gltf.animations[0]).play();
+                    }
+                }
+
+                knightLoaded = true;
+            }, undefined, err => console.error('Knight load failed:', err));
+        }
+
+        // Per-frame: glue body to player position + yaw. Called from
+        // animate() right before render.
+        const _knightEuler = new THREE.Euler();
+        window.knightTick = function(delta) {
+            if (!knightLoaded) return;
+
+            // Decide which animation should be playing. Any directional
+            // key down = running. Note: while the character menu is
+            // open, all keys get cleared in openCharacterMenu, so the
+            // body smoothly transitions back to idle when menu opens.
+            const moving = !!(keys.w || keys.a || keys.s || keys.d
+                             || keys.arrowup || keys.arrowdown
+                             || keys.arrowleft || keys.arrowright);
+            const desired = moving ? 'run' : 'idle';
+            if (desired !== knightAnimState && knightIdleAction && knightRunAction) {
+                // crossFadeTo handles the weight ramp automatically;
+                // 0.18s is short enough to feel responsive but long
+                // enough to hide the pose-snap. `true` = warp time so
+                // the cycles stay in sync during the fade.
+                if (desired === 'run') {
+                    knightIdleAction.crossFadeTo(knightRunAction, 0.18, true);
+                } else {
+                    knightRunAction.crossFadeTo(knightIdleAction, 0.18, true);
+                }
+                knightAnimState = desired;
+            }
+
+            // Advance the mixer. If delta wasn't passed in (legacy
+            // callers), fall back to a 60fps step.
+            if (knightMixer) knightMixer.update(delta || 1/60);
+
+            knightWrapper.position.set(
+                camera.position.x,
+                camera.position.y - USER_HEIGHT,
+                camera.position.z
+            );
+            // Yaw only. setFromQuaternion with 'YXZ' order extracts
+            // yaw cleanly even when the camera is also pitched.
+            _knightEuler.setFromQuaternion(camera.quaternion, 'YXZ');
+            knightWrapper.rotation.y = _knightEuler.y;
+        };
+
+        // --- CHARACTER PORTRAIT (rendered inside the menu) ---
+        // A second, fully-isolated three.js stack: own renderer, own
+        // scene, own camera, own lights, own Knight.glb load. This is
+        // intentional — sharing the main scene/lighting would force us
+        // to filter what the portrait camera sees, and cloning a
+        // SkinnedMesh properly needs SkeletonUtils. Re-loading is dead
+        // simple and the GLB is already in the browser cache.
+        //
+        // The render loop only runs while the menu is open (driven from
+        // openCharacterMenu below), so this costs zero when closed.
+        const portraitCanvas    = document.getElementById('cm-portrait');
+        const portraitRenderer  = new THREE.WebGLRenderer({
+            canvas: portraitCanvas,
+            alpha: true,
+            antialias: true
+        });
+        portraitRenderer.setPixelRatio(window.devicePixelRatio || 1);
+        portraitRenderer.setSize(
+            portraitCanvas.width,
+            portraitCanvas.height,
+            false
+        );
+
+        const portraitScene  = new THREE.Scene();
+        // Camera framed for a full-body shot. The actual rendered model
+        // (computed from bone world positions) spans ~4.6 units tall in
+        // its native frame — far/near and initial position are set
+        // generously here, then overwritten with a precise distance
+        // after the GLB loads in the loader callback below.
+        const portraitCamera = new THREE.PerspectiveCamera(
+            32,
+            portraitCanvas.width / portraitCanvas.height,
+            0.1,
+            1000
+        );
+        portraitCamera.position.set(0, 0, 10);
+        portraitCamera.lookAt(0, 0, 0);
+
+        // 3-point lighting — key, fill, rim — so the silhouette reads
+        // even against the near-black panel background. Distances are
+        // scaled for the model's native ~5-unit height.
+        const pKey  = new THREE.DirectionalLight(0xffffff, 1.4);
+        pKey.position.set(4, 8, 6);
+        portraitScene.add(pKey);
+        const pFill = new THREE.DirectionalLight(0xbfd4ff, 0.5);
+        pFill.position.set(-6, 3, 4);
+        portraitScene.add(pFill);
+        const pRim  = new THREE.DirectionalLight(0xffe8b0, 0.6);
+        pRim.position.set(2, 5, -8);
+        portraitScene.add(pRim);
+        portraitScene.add(new THREE.AmbientLight(0xffffff, 0.35));
+
+        let portraitKnight = null;
+        let portraitPivot  = null;
+        let portraitMixer  = null;  // AnimationMixer for the menu portrait
+        {
+            const ploader = new GLTFLoader();
+            ploader.load('assets/Knight_Animated.glb', g => {
+                portraitKnight = g.scene;
+                portraitKnight.updateMatrixWorld(true);
+
+                // Use BONE positions, not the bind-pose mesh bbox, for
+                // sizing and centering. The GLB's bind matrices don't
+                // line up with the rest pose, so Box3.setFromObject
+                // (which uses bind-pose verts) reports a bbox in the
+                // wrong place. The bones at rest are where the model
+                // actually renders. Skip IK helpers (off to the side).
+                const _bboxV = new THREE.Vector3();
+                const boneBox = new THREE.Box3();
+                portraitKnight.traverse(o => {
+                    if (o.isBone && !o.name.startsWith('IK')) {
+                        o.getWorldPosition(_bboxV);
+                        boneBox.expandByPoint(_bboxV);
+                    }
+                });
+                const boneSize   = new THREE.Vector3();
+                const boneCenter = new THREE.Vector3();
+                boneBox.getSize(boneSize);
+                boneBox.getCenter(boneCenter);
+
+                // Pivot at origin; offset the knight by -boneCenter so
+                // the rendered model is centered at origin and rotates
+                // around its own midpoint.
+                portraitPivot = new THREE.Group();
+                portraitKnight.position.sub(boneCenter);
+                portraitPivot.add(portraitKnight);
+                portraitScene.add(portraitPivot);
+
+                // Frame the camera based on the bone bbox, with a bit
+                // of padding so we don't crop arms/head against the
+                // canvas edges.
+                const fitSize  = Math.max(boneSize.y, boneSize.x);
+                const fovRad   = portraitCamera.fov * Math.PI / 180;
+                const distance = (fitSize / 2) / Math.tan(fovRad / 2) * 1.45;
+                portraitCamera.position.set(0, 0, distance);
+                portraitCamera.lookAt(0, 0, 0);
+                portraitCamera.updateProjectionMatrix();
+
+                portraitKnight.traverse(o => {
+                    if (o.isMesh || o.isSkinnedMesh) {
+                        o.frustumCulled = false; // skinned bbox lies, see above
+                    }
+                });
+
+                // If the knight ends up facing AWAY from the camera
+                // (you see his back instead of his front), flip this to
+                // Math.PI.
+                portraitPivot.rotation.y = 0;
+
+                // Hook up the idle animation on the portrait.
+                if (g.animations && g.animations.length) {
+                    portraitMixer = new THREE.AnimationMixer(portraitKnight);
+                    const idleClip = THREE.AnimationClip.findByName(g.animations, 'Idle')
+                                  || g.animations[0];
+                    portraitMixer.clipAction(idleClip).play();
+                }
+            }, undefined, err => console.error('Portrait knight load failed:', err));
+        }
+
+        // Render loop is started by openCharacterMenu and self-terminates
+        // when window.menuOpen flips false — see the .open/.close
+        // functions further down.
+        let portraitRafId = null;
+        let _portraitLastTime = 0;
+        function portraitRenderLoop(now) {
+            if (!window.menuOpen) {
+                portraitRafId = null;
+                _portraitLastTime = 0;
+                return;
+            }
+            portraitRafId = requestAnimationFrame(portraitRenderLoop);
+            // Compute delta for the AnimationMixer. requestAnimationFrame
+            // hands us a high-res timestamp in ms; cap at 100ms in case
+            // the tab was backgrounded and the gap is huge.
+            const t = now || performance.now();
+            const delta = _portraitLastTime
+                ? Math.min((t - _portraitLastTime) / 1000, 0.1)
+                : 1/60;
+            _portraitLastTime = t;
+            if (portraitMixer) portraitMixer.update(delta);
+            if (portraitPivot) {
+                portraitPivot.rotation.y += 0.006; // slow idle spin
+            }
+            portraitRenderer.render(portraitScene, portraitCamera);
+        }
 
      let keys = {
             w: 0, a: 0, s: 0, d: 0,
@@ -4513,13 +4954,59 @@ const s = Math.sin(angle); const c = Math.cos(angle);
         };
 
         document.addEventListener('keydown', e => { 
+            // While the menu is open, swallow movement/jump input so the
+            // player doesn't keep walking with the menu up.
+            if (window.menuOpen) return;
             const key = e.key.toLowerCase();
             if(keys.hasOwnProperty(key)) keys[key] = 1; 
         });
 
         document.addEventListener('keyup', e => { 
+            if (window.menuOpen) return;
             const key = e.key.toLowerCase();
             if(keys.hasOwnProperty(key)) keys[key] = 0; 
+        });
+
+        // --- CHARACTER MENU TOGGLE ---
+        // Tab opens/closes; Esc closes (only when open, so it doesn't
+        // interfere with Esc's normal behavior of breaking pointer lock).
+        // We have to preventDefault() on Tab — otherwise the browser
+        // moves keyboard focus to the next focusable element.
+        window.menuOpen = false;
+        const characterMenuEl = document.getElementById('character-menu');
+
+        function openCharacterMenu() {
+            if (window.menuOpen) return;
+            window.menuOpen = true;
+            characterMenuEl.classList.add('open');
+            // Drop any held movement keys so the player stops dead.
+            for (const k in keys) keys[k] = 0;
+            // Release the cursor so the user can actually use the menu.
+            if (controls.isLocked) controls.unlock();
+            // Kick off the portrait render loop (self-terminates when
+            // menuOpen flips false). Guarded so re-opens don't stack.
+            if (portraitRafId === null) portraitRenderLoop();
+        }
+        function closeCharacterMenu() {
+            if (!window.menuOpen) return;
+            window.menuOpen = false;
+            characterMenuEl.classList.remove('open');
+            // Try to grab pointer-lock back. Browsers usually allow this
+            // without a fresh user gesture if lock was recent; if it
+            // fails, the existing click-to-lock handler picks up the slack.
+            if (window.worldActive) {
+                try { controls.lock(); } catch (_) { /* user can click to relock */ }
+            }
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                if (window.menuOpen) closeCharacterMenu();
+                else openCharacterMenu();
+            } else if (e.key === 'Escape' && window.menuOpen) {
+                closeCharacterMenu();
+            }
         });
 
 // --- COLLISION SETUP ---
@@ -5163,6 +5650,9 @@ const s = Math.sin(angle); const c = Math.cos(angle);
             // in/live/fade out lifecycle. The function is registered
             // asynchronously after the GLB loads, hence the guard.
             if (window.cloudsTick) window.cloudsTick(delta);
+
+            // Update first-person body to follow camera position + yaw.
+            if (window.knightTick) window.knightTick(delta);
 
             renderer.render(scene, camera);
 
