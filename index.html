@@ -4201,7 +4201,7 @@ const s = Math.sin(angle); const c = Math.cos(angle);
             // from a low-poly wheat .glb — using it as an alpha-tested
             // billboard gets us the exact look of real wheat (kernels,
             // awns, drooping leaves) at 8 tris per tuft instead of 100+.
-            const wheatBladeTex = new THREE.TextureLoader().load('Assets/wheat_sprite.png');
+            const wheatBladeTex = new THREE.TextureLoader().load('assets/wheat_sprite.png');
             wheatBladeTex.magFilter = THREE.LinearFilter;
             wheatBladeTex.minFilter = THREE.LinearMipMapLinearFilter;
             wheatBladeTex.wrapS = wheatBladeTex.wrapT = THREE.ClampToEdgeWrapping;
